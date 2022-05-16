@@ -6,10 +6,11 @@ using System.Threading.Tasks;
 
 namespace Lawyers_informations_reporter.Models
 {
-    public class OutcomeHistory
+    public class Lawyer
     {
-        public string StyleOfCause { get; set; }
+        public string FirstName { get; set; }
+        public string LastName { get; set; }
         public string Url { get; set; }
-        public string Date { get; set; }
+        public string IsRequired { get; set; }
     }
 }
