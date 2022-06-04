@@ -9,8 +9,9 @@ namespace Lawyers_informations_reporter.Models
     public class LawyerReportElements
     {
         public string LastName { get; set; }
-        public Lawyer LawocityAlberta { get; set; }
+        public Lawyer LawSocietyAlberta { get; set; }
         public List<Lawyer> OutComes { get; set; } = new List<Lawyer>();
         public List<Lawyer> Hearings { get; set; } = new List<Lawyer>();
+        public bool IsNew { get; set; } = true;
     }
 }

@@ -3,23 +3,16 @@ using Lawyers_informations_reporter.Models;
 using MetroFramework.Controls;
 using MetroFramework.Forms;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
-using OfficeOpenXml;
-using PdfSharp.Pdf;
-using PdfSharp.Pdf.IO;
 using scrapingTemplateV51.Models;
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Data;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Net;
-using System.Net.Http;
 using System.Reflection;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -35,8 +28,11 @@ namespace scrapingTemplateV51
         private Dictionary<string, string> _config;
         public HttpCaller HttpCaller = new HttpCaller();
         List<LawyerInputData> _inputs;
-        List<string> _years = new List<string>();
+        List<LawyerInputData> newInputs;
         List<Lawyer> _lawyersFromlsaMemberpro = new List<Lawyer>();
+        NewSearch _newSearch;
+        List<LawyerReportElements> _lawyersReportElements = new List<LawyerReportElements>();
+        bool IsThefirstTime = true;
 
         public MainForm()
         {
@@ -64,43 +60,228 @@ namespace scrapingTemplateV51
 
         private async Task MainWork()
         {
-            if (!File.Exists("lawyers.txt"))
+            if (inputI.Text == "")
             {
-                Reporter.Log("We lost the data base please wait till we rescrape it again");
-                await ScrapeDataBase();
-                Reporter.Log("the scrape success, you can select the required lawyer now");
-                _lawyersFromlsaMemberpro = JsonConvert.DeserializeObject<List<Lawyer>>(File.ReadAllText("lawyers.txt"));
-            }
-            else
-            {
-                _lawyersFromlsaMemberpro = JsonConvert.DeserializeObject<List<Lawyer>>(File.ReadAllText("lawyers.txt"));
-            }
-            if (!File.Exists(inputI.Text) || inputI.Text != "")
-            {
-                _inputs = ExcelHelper.ReadFromExcel<LawyerInputData>(inputI.Text);
-            }
-            else
-            {
-                MessageBox.Show("Please select the excel input data");
+                MessageBox.Show("Please select input excel file");
                 return;
             }
-            var filledInputFiles = Directory.GetFiles("Inputs").ToList();
-            if (filledInputFiles.Count > 0)
+            if (!File.Exists(inputI.Text))
             {
-                await CreateReports(filledInputFiles);
+                MessageBox.Show("The input lawyer excel file not found, Please make sure that you select an exist input file");
+                return;
             }
-            await ScrapeYears();
-            await StartScrapingThePossiblitiesInputs();
-            MessageBox.Show("The excel files are ready please chose the required lawyer(s) so the bot can create the report(s)");
+            _inputs = ExcelHelper.ReadFromExcel<LawyerInputData>(inputI.Text);
+            //_newSearch = new NewSearch();
+            //await _newSearch.ScrapeYears();
+            if (!File.Exists("lawyers.txt"))
+            {
+                Reporter.Log("We are scraping the Law society Alberta lawyers's database");
+                await ScrapeDataBase();
+                Reporter.Log("The Law society Alberta lawyers's database scraped successfully");
+                _lawyersFromlsaMemberpro = JsonConvert.DeserializeObject<List<Lawyer>>(File.ReadAllText("lawyers.txt"));
+            }
+            _lawyersFromlsaMemberpro = JsonConvert.DeserializeObject<List<Lawyer>>(File.ReadAllText("lawyers.txt"));
+
+            var filledLawyerInputFiles = Directory.GetFiles("Inputs").ToList();
+            if (filledLawyerInputFiles.Count > 0)
+            {
+                await SelectTheRquiredlawyers(filledLawyerInputFiles);
+                var lastInputs = JsonConvert.DeserializeObject<List<List<Lawyer>>>(File.ReadAllText("Last inputs.text"));
+                for (int i = 0; i < lastInputs.Count; i++)
+                {
+
+                    if (lastInputs[i].Count > 0)
+                    {
+                        var url = lastInputs[i][0].Url;
+                        if (url.Contains("lsa.memberpro.net"))
+                        {
+                            var IsSelecyedlawSocityAlberta = lastInputs[i].Where(x => x.Url.Contains("lsa.memberpro.net")).Any(y => y.Url != null);
+                            var Isrequired = lastInputs[i].Where(x => x.Url.Contains("lsa.memberpro.net")).Any(y => y.IsRequired != null);
+                            if (IsSelecyedlawSocityAlberta && !Isrequired)
+                            {
+                                MessageBox.Show($"Please select the required lawyer from the suggestion(s) in the \"Law socity Alberta\" sheet for the this lawyer \"{lastInputs[i][0].LastName}\"");
+                                return;
+                            }
+                        }
+                        if (url.Contains("www.canlii.org"))
+                        {
+                            var IsOutecomesSelectedUrls = lastInputs[i].Where(x => x.Url.Contains("www.canlii.org")).Any(y => y.Url != null);
+                            var Isrequired = lastInputs[i].Where(x => x.Url.Contains("www.canlii.org")).Any(y => y.IsRequired != null);
+                            if (IsOutecomesSelectedUrls && !Isrequired)
+                            {
+                                MessageBox.Show($"Please select the required Outecome(s) from the suggestions in the \"Outcomes\" sheet for the this lawyer \"{lastInputs[i][0].LastName}\"");
+                                return;
+                            }
+                        }
+                        if (url.Contains("www.lawsociety.ab.ca"))
+                        {
+                            var IsHearungsSeletedUrls = lastInputs[i].Where(x => x.Url.Contains("www.lawsociety.ab.ca")).Any(y => y.Url != null);
+                            var Isrequired = lastInputs[i].Where(x => x.Url.Contains("www.lawsociety.ab.ca")).Any(y => y.IsRequired != null);
+                            if (IsHearungsSeletedUrls && !Isrequired)
+                            {
+                                MessageBox.Show($"Please select the required Hearing Schedule(s) from the suggestions in the \"Hearing Schedule\" sheet for the this lawyer \"{lastInputs[i][0].LastName}\"");
+                                return;
+                            }
+                        }
+                    }
+
+                }
+                await Task.Run(CreateReports);
+                SaveSearch();
+                DeletTheInputFiles(filledLawyerInputFiles);
+                Reporter.Log("the report(s) ready and The last search saved successfilly");
+            }
+            else
+            {
+                if (File.Exists("Saved Searches.txt"))
+                {
+                    _lawyersReportElements = JsonConvert.DeserializeObject<List<LawyerReportElements>>(File.ReadAllText("Saved Searches.txt"));
+                }
+                if (_lawyersReportElements.Count > 0)
+                {
+                    newInputs = CheckForNewInputs();
+                    if (newInputs.Count > 0)
+                    {
+                        Reporter.Log("The bot detected a new lawyer(s) that you want to create a report for, excel file(s) preparaion in progress...");
+                        _newSearch = new NewSearch();
+                        await _newSearch.PreparingTheRequiredFilesForSearch(newInputs, _lawyersFromlsaMemberpro);
+                        MessageBox.Show("The excel file(s) for the new search is/are ready please chose the required lawyer(s) so the bot can create the report(s)");
+                        return;
+                    }
+                    else
+                    {
+                        await Task.Run(CreateReports);
+                        SaveSearch();
+                        DeletTheInputFiles(filledLawyerInputFiles);
+                        Reporter.Log("the report(s) ready and The last search saved successfilly");
+                    }
+                }
+            }
+            if (_lawyersReportElements.Count == 0)
+            {
+                Reporter.Log("Prepaing the ecxcel file(s) in progress to choose the required lawyers, please wait");
+                _newSearch = new NewSearch();
+                await _newSearch.PreparingTheRequiredFilesForSearch(_inputs, _lawyersFromlsaMemberpro);
+                MessageBox.Show("The excel file(s) are ready please chose the required lawyer(s) so the bot can create the report(s)");
+                return;
+            }
         }
 
-        async Task CreateReports(List<string> filledInputFiles)
+        private void DeletTheInputFiles(List<string> filledInputFiles)
         {
-            var lawyerReportElements = new List<LawyerReportElements>();
-            foreach (var filledInputFile in filledInputFiles)
+            foreach (var file in filledInputFiles)
             {
-
+                var fullPathFile = new FileInfo(file).FullName;
+                File.Delete(fullPathFile);
             }
+        }
+
+        private List<LawyerInputData> CheckForNewInputs()
+        {
+            var newInputs = new List<LawyerInputData>();
+            var lastLawyersHistorySearch = _lawyersReportElements.Select(x => x.LastName).ToList();
+            foreach (var input in _inputs)
+            {
+                if (!lastLawyersHistorySearch.Contains(input.LastName))
+                {
+                    newInputs.Add(input);
+                }
+            }
+            return newInputs;
+        }
+
+        private void SaveSearch()
+        {
+            foreach (var lawyerReportElements in _lawyersReportElements)
+            {
+                lawyerReportElements.IsNew = false;
+            }
+            var json = JsonConvert.SerializeObject(_lawyersReportElements, Formatting.Indented);
+            File.WriteAllText("Saved Searches.txt", json);
+        }
+
+        private async Task CreateReports()
+        {
+            var newLawyers = new List<LawyerReportElements>();
+            foreach (var reportElements in _lawyersReportElements)
+            {
+                if (reportElements.IsNew)
+                {
+                    newLawyers.Add(reportElements);
+                }
+            }
+            var createReports = new CreateReport();
+            //createReports._years = _newSearch._years;
+            if (newLawyers.Count > 0)
+            {
+                await createReports.CreatePdfs(newLawyers);
+            }
+            else
+            {
+                await createReports.CreatePdfs(_lawyersReportElements);
+            }
+        }
+
+        async Task SelectTheRquiredlawyers(List<string> files)
+        {
+            var LawyersHistorySearch = _lawyersReportElements.Select(x => x.LastName).ToList();
+            var allLists = new List<List<Lawyer>>();
+            foreach (var file in files)
+            {
+                var lists = file.ReadAllSheetsFromExcel<Lawyer>();
+                allLists.AddRange(lists);
+                var lawyerReportElements = new LawyerReportElements();
+                lawyerReportElements.LastName = lists[0][0].LastName;
+                if (LawyersHistorySearch.Contains(lawyerReportElements.LastName))
+                {
+                    continue;
+                }
+                foreach (var lawyers in lists)
+                {
+                    if (lawyers.Count > 0)
+                    {
+                        var url = lawyers[0].Url;
+                        if (url.Contains("lsa.memberpro.net"))
+                        {
+                            foreach (var lawyer in lawyers)
+                            {
+                                if (lawyer.IsRequired != null)
+                                {
+                                    lawyerReportElements.LawSocietyAlberta = lawyer;
+                                    break;
+                                }
+                            }
+                        }
+                        if (url.Contains("www.canlii.org"))
+                        {
+                            foreach (var lawyer in lawyers)
+                            {
+                                if (lawyer.IsRequired != null)
+                                {
+                                    lawyerReportElements.OutComes.Add(lawyer);
+                                }
+                            }
+                        }
+                        if (url.Contains("www.lawsociety.ab.ca"))
+                        {
+                            foreach (var lawyer in lawyers)
+                            {
+                                if (lawyer.IsRequired != null)
+                                {
+                                    lawyerReportElements.Hearings.Add(lawyer);
+                                }
+                            }
+                        }
+                    }
+                }
+                _lawyersReportElements.Add(lawyerReportElements);
+            }
+            if (File.Exists("Saved Searches.txt"))
+            {
+                _lawyersReportElements.AddRange(JsonConvert.DeserializeObject<List<LawyerReportElements>>(File.ReadAllText("Saved Searches.txt")));
+            }
+            var json = JsonConvert.SerializeObject(allLists, Formatting.Indented);
+            File.WriteAllText("Last inputs.text", json);
         }
 
         private async Task ScrapeDataBase()
@@ -119,15 +300,13 @@ namespace scrapingTemplateV51
                 {
                     continue;
                 }
-
-                #region other attribute maybe needed in the future
+                #region Attributes probably needed later
                 //var city = node.SelectSingleNode("./td[2]").InnerText.Trim();
                 //var gender = node.SelectSingleNode("./td[3]").InnerText.Trim();
                 //var practisingStatus = node.SelectSingleNode("./td[4]").InnerText.Trim();
                 //var enrolmentDate = node.SelectSingleNode("./td[5]").InnerText.Trim();
                 //var firm = node.SelectSingleNode("./td[6]").InnerText.Trim(); 
                 #endregion
-
                 _lawyersFromlsaMemberpro.Add(new Lawyer
                 {
                     FirstName = firstName,
@@ -138,269 +317,12 @@ namespace scrapingTemplateV51
             var json = JsonConvert.SerializeObject(_lawyersFromlsaMemberpro, Formatting.Indented);
             File.WriteAllText("lawyers.txt", json);
         }
-
-        private async Task ScrapeYears()
-        {
-            var doc = await HttpCaller.GetDoc("https://www.canlii.org/en/ab/abls/");
-            var nodes = doc.DocumentNode.SelectNodes("//select[@id='navYearsSelector']/option");
-            for (int i = 1; i < nodes.Count; i++)
-            {
-                _years.Add(nodes[i].InnerText.Trim());
-            }
-        }
-
-        private async Task StartScrapingThePossiblitiesInputs()
-        {
-            foreach (var input in _inputs)
-            {
-                await CreateTheInputsBasedOnthelastName(input);
-            }
-        }
-
-        private async Task CombinePdfs(LawyerInputData input)
-        {
-            var pdfFiles = Directory.GetFiles("pdfs");
-            PdfDocument outputPDFDocument = new PdfDocument();
-            if (pdfFiles.Count() > 0)
-            {
-                foreach (string pdfFile in pdfFiles)
-                {
-                    PdfDocument inputPDFDocument = PdfReader.Open(pdfFile, PdfDocumentOpenMode.Import);
-                    outputPDFDocument.Version = inputPDFDocument.Version;
-                    foreach (PdfPage page in inputPDFDocument.Pages)
-                    {
-                        outputPDFDocument.AddPage(page);
-                    }
-                }
-                outputPDFDocument.Save($"reports/{input.FirstName} {input.LastName}.pfd");
-                foreach (var pdfFile in pdfFiles)
-                {
-                    File.Delete(pdfFile);
-                }
-            }
-            if (pdfFiles.Count() == 0)
-            {
-                File.AppendAllText($"lawyers not founded/lawyers not founded.txt", input.Firm + " " + input.LastName);
-            }
-        }
-
-        private async Task CreateTheInputsBasedOnthelastName(LawyerInputData input)
-        {
-            await GetDataFromLawSocityAlberta(input);
-            await GetDecisionsAndOutcomes(input);
-            await GetHearingSchedule(input);
-        }
-
-        private async Task GetHearingSchedule(LawyerInputData input)
-        {
-            var doc = await HttpCaller.GetDoc("https://www.lawsociety.ab.ca/regulation/adjudication/hearing-schedule/");
-            var nodes = doc.DocumentNode.SelectNodes("//table[@id='hearings']//tr/td[1]/a");
-            var hearingCases = new List<Lawyer>();
-            foreach (var node in nodes)
-            {
-                var fullName = node.InnerText.Trim();
-                var x = fullName.LastIndexOf(" ");
-                var firstName = fullName.Substring(0, x);
-                var lastName = fullName.Substring(x + 1);
-                var url = node.GetAttributeValue("href", "").Trim();
-                hearingCases.Add(
-                    new Lawyer
-                    {
-                        FirstName = firstName,
-                        LastName = lastName,
-                        Url = url
-                    });
-            }
-            var suggestionsHearing = hearingCases.FindAll(x => x.LastName.ToLower() == input.LastName.ToLower());
-            suggestionsHearing.Save($"Inputs/{input.FirstName} {input.LastName} suggestions.xlsx", "Hearing Schedule");
-        }
-
-        private async Task GetDecisionsAndOutcomes(LawyerInputData input)
-        {
-            #region Outcomes from lawsocity
-            //var doc = await HttpCaller.GetDoc("https://www.lawsociety.ab.ca/regulation/adjudication/decisions-outcomes/");
-            //var records = doc.DocumentNode.SelectNodes("//table[@id='outcomes']//tr");
-            //for (int i = 1; i < records.Count; i++)
-            //{
-            //    var nameAndLastName = records[i].SelectSingleNode(".//td[2]").InnerText.Trim();
-            //    var x = nameAndLastName.LastIndexOf(" ");
-            //    var name = nameAndLastName.Substring(0, x);
-            //    var lasName = nameAndLastName.Substring(x + 1);
-            //} 
-            #endregion
-            var outcomesHistory = new List<Lawyer>();
-            for (int i = 0; i < _years.Count; i++)
-            {
-                var json = await HttpCaller.GetHtml($"https://www.canlii.org/en/ab/abls/nav/date/{_years[i]}/items");
-                var array = JArray.Parse(json);
-                foreach (var node in array)
-                {
-                    var lastName = (string)node.SelectToken("..styleOfCause");
-                    var x = lastName.LastIndexOf(" ");
-                    lastName = lastName.Substring(x + 1);
-                    var url = "https://www.canlii.org" + ((string)node.SelectToken("..url"));
-                    var date = ((string)node.SelectToken("..judgmentDate"));
-                    outcomesHistory.Add(new Lawyer { LastName = lastName, Url = url });
-                }
-            }
-            var lawyerOutcomesHistories = outcomesHistory.FindAll(x => x.LastName.ToLower() == input.LastName.ToLower());
-            lawyerOutcomesHistories.Save($"Inputs/{input.FirstName} {input.LastName} suggestions.xlsx", "Outcomes");
-        }
-
-        private async Task GetDataFromLawSocityAlberta(LawyerInputData input)
-        {
-            #region preceding work about socity alberta
-            //var format = new List<KeyValuePair<string, string>>()
-            //{
-            //   new KeyValuePair<string, string>("person_nm",input.LastName),
-            //   new KeyValuePair<string, string>("first_nm",input.FirstName),
-            //   new KeyValuePair<string, string>("member_status_cl","PRAC"),
-            //   new KeyValuePair<string, string>("city_nm",""),
-            //   new KeyValuePair<string, string>("location_nm",input.Firm),
-            //   new KeyValuePair<string, string>("gender_cl",""),
-            //   new KeyValuePair<string, string>("language_cl",""),
-            //   new KeyValuePair<string, string>("area_ds",""),
-            //   new KeyValuePair<string, string>("mode","search")
-            //};
-            //var html = await HttpCaller.PostFormData("https://lsa.memberpro.net/main/body.cfm?menu=directory&submenu=directoryPractisingMember", format);
-            //var doc = new HtmlAgilityPack.HtmlDocument();
-            //doc.LoadHtml(html);
-            //var suggestions = doc.DocumentNode.SelectNodes("//tr[contains(@class,'table-row')]");
-            //var headerName = doc.DocumentNode.SelectSingleNode("//div[@class='content-heading']")?.InnerText.Trim();
-            //if (suggestions != null && headerName == null)
-            //{
-            //    ReportNotFoundedLawyer(input, suggestions);
-            //}
-            //html = AddCssAndStyle(html);
-            //doc.LoadHtml(html);
-            ////doc.DocumentNode.SelectSingleNode("//div[@class='instructions-text']").Remove();
-            ////doc.DocumentNode.SelectSingleNode("//div[@id='message']").Remove();
-            //html = doc.DocumentNode.OuterHtml;
-            //doc.Save("test.html");
-            //byte[] res = null;
-            //using (MemoryStream ms = new MemoryStream())
-            //{
-            //    var pdf = TheArtOfDev.HtmlRenderer.PdfSharp.PdfGenerator.GeneratePdf(html, PdfSharp.PageSize.RA1, -1);
-            //    pdf.Save(ms);
-            //    res = ms.ToArray();
-            //    File.WriteAllBytes($"pdfs/{input.LastName}.pdf", res);
-            //} 
-            #endregion
-            var socityAlbertaSuggestions = _lawyersFromlsaMemberpro.FindAll(x => x.LastName.ToLower() == input.LastName.ToLower());
-            socityAlbertaSuggestions.Save($"Inputs/{input.FirstName} {input.LastName} suggestions.xlsx", "Law socity Alberta");
-        }
-
-        private void ReportNotFoundedLawyer(LawyerInputData input, HtmlAgilityPack.HtmlNodeCollection suggestions)
-        {
-            var suggetionsFounded = new List<Lawyer>();
-            foreach (var suggestion in suggestions)
-            {
-                var name = suggestion.SelectSingleNode("./td[1]").InnerText.Trim();
-                var url = suggestion.SelectSingleNode("./td[1]/a").GetAttributeValue("href", "");
-                var city = suggestion.SelectSingleNode("./td[2]").InnerText.Trim();
-                var gender = suggestion.SelectSingleNode("./td[3]").InnerText.Trim();
-                var practisingStatus = suggestion.SelectSingleNode("./td[4]").InnerText.Trim();
-                var enrolmentDate = suggestion.SelectSingleNode("./td[5]").InnerText.Trim();
-                var firm = suggestion.SelectSingleNode("./td[6]").InnerText.Trim();
-                suggetionsFounded.Add(new Lawyer
-                {
-                    //Name = name,
-                    Url = url,
-                });
-            }
-            suggetionsFounded.SaveToExcel($"suggestions for not founded lawyers/Suggestions for {input.FirstName} {input.LastName}.xlsx");
-        }
-
-        private string AddCssAndStyle(string html)
-        {
-            var x = html.IndexOf("<DIV ID=\"session-overlay\"></DIV>");
-            html = html.Replace("//fonts.googleapis.com/css?family=Open+Sans", LawSocietyOfAlbertaStyleAndCss._css).
-                Replace("/include/body/styles/animate.css", LawSocietyOfAlbertaStyleAndCss._animate).
-                Replace("/include/body/styles/datepicker-ui.css", LawSocietyOfAlbertaStyleAndCss._datepicker).
-                Replace("/include/body/styles/site_colors.cfm?licensee_cl=LSA", LawSocietyOfAlbertaStyleAndCss._site_colors).
-                Replace("/include/body/styles/site_styles.css", LawSocietyOfAlbertaStyleAndCss._site_styles).
-                Replace("/include/body/styles/override.cfm?licensee_cl=LSA", LawSocietyOfAlbertaStyleAndCss._override).
-                Replace("/include/body/js/jquery.0.11.min.js", LawSocietyOfAlbertaStyleAndCss._jquery).
-                Replace("/include/body/js/jquery-ui.js", LawSocietyOfAlbertaStyleAndCss._jqueryUi).
-                Replace("/include/body/js/scripts.js", LawSocietyOfAlbertaStyleAndCss._script).
-                Replace("/include/body/js/jquery.dataTables.min.js", LawSocietyOfAlbertaStyleAndCss._jquerytable).
-                Replace("/include/body/styles/style.css", LawSocietyOfAlbertaStyleAndCss._style).
-                Replace("/include/body/images/lsa_logo_v2.jpg", LawSocietyOfAlbertaStyleAndCss._img1).
-                Replace("/include/body/images/memberpro-logo.png", LawSocietyOfAlbertaStyleAndCss._img2).
-                Replace("<DIV ID=\"session-overlay\"></DIV>", "<DIV ID=\"session-overlay\" style=\"display: none;\"></DIV>").
-                Replace("<DIV ID=\"sideMenu\" CLASS=\"side-menu\"", "<div id=\"sideMenu\" class=\"side-menu\" style=\"height: 1907px; \">").
-                Replace("<DIV ID=\"session-message-center\"></DIV>", "");
-            return html;
-        }
-
-        public static async Task WritePDF(string htmlPath, string pdfPath, string pdfConverterExe)
-        {
-            await Task.Delay(100);
-            try
-            {
-                Process p;
-                StreamWriter stdin;
-                ProcessStartInfo psi = new ProcessStartInfo();
-                psi.UseShellExecute = false;
-                psi.FileName = pdfConverterExe;
-                psi.CreateNoWindow = true;
-                psi.RedirectStandardInput = true;
-                psi.RedirectStandardOutput = true;
-                psi.RedirectStandardError = true;
-                psi.Arguments = "";
-                psi.Arguments += "--page-size A1";
-                psi.Arguments += "--disable-smart-shrinking";
-                psi.Arguments += "--print-media-type";
-                psi.Arguments += "--margin-top 5mm --margin-bottom 5mm --margin-right 10mm --margin-left 30mm";
-                psi.Arguments = "-q  -n - \"" + pdfPath + "\" ";
-
-
-                p = Process.Start(psi);
-
-                try
-                {
-                    stdin = p.StandardInput;
-                    stdin.AutoFlush = true;
-                    var html = File.ReadAllText(htmlPath, Encoding.UTF8);
-                    StreamWriter utf8Writer = new StreamWriter(p.StandardInput.BaseStream, Encoding.UTF8);
-                    utf8Writer.Write(html);
-                    stdin.Close();
-
-                    if (p.WaitForExit(15000))
-                    {
-                    }
-                }
-                finally
-                {
-                    p.Close();
-                    p.Dispose();
-                }
-
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(ex.ToString());
-            }
-        }
         private void Form1_Load(object sender, EventArgs e)
         {
-            if (!Directory.Exists("pdfs"))
-            {
-                Directory.CreateDirectory("pdfs");
-            }
             if (!Directory.Exists("reports"))
             {
                 Directory.CreateDirectory("reports");
             }
-            if (!Directory.Exists("lawyers not founded"))
-            {
-                Directory.CreateDirectory("lawyers not founded");
-            }
-            if (!Directory.Exists("suggestions for not founded lawyers"))
-            {
-                Directory.CreateDirectory("suggestions for not founded lawyers");
-            }
-
             ServicePointManager.DefaultConnectionLimit = 65000;
             Application.ThreadException += Application_ThreadException;
             AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
@@ -650,55 +572,7 @@ namespace scrapingTemplateV51
 
         private async void startB_Click_1(object sender, EventArgs e)
         {
-            var files = Directory.GetFiles("Inputs");
-            var lawyersReportElements = new List<LawyerReportElements>();
-            foreach (var file in files)
-            {
-                var lists = file.ReadAllSheetsFromExcel<Lawyer>();
-                var lawyerReportElements = new LawyerReportElements();
-                lawyerReportElements.LastName = lists[0][0].LastName;
-                foreach (var lawyers in lists)
-                {
-                    if (lawyers.Count > 0)
-                    {
-                        var url = lawyers[0].Url;
-                        if (url.Contains("lsa.memberpro.net"))
-                        {
-                            foreach (var lawyer in lawyers)
-                            {
-                                if (lawyer.IsRequired != null)
-                                {
-                                    lawyerReportElements.LawocityAlberta = lawyer;
-                                    break;
-                                }
-                            }
-                        }
-                        if (url.Contains("www.canlii.org"))
-                        {
-                            foreach (var lawyer in lawyers)
-                            {
-                                if (lawyer.IsRequired != null)
-                                {
-                                    lawyerReportElements.OutComes.Add(lawyer);
-                                }
-                            }
-                        }
-                        if (url.Contains("www.lawsociety.ab.ca"))
-                        {
-                            foreach (var lawyer in lawyers)
-                            {
-                                if (lawyer.IsRequired != null)
-                                {
-                                    lawyerReportElements.Hearings.Add(lawyer);
-                                }
-                            }
-                        }
-                    }
-                }
-                lawyersReportElements.Add(lawyerReportElements);
-            }
-
-            return;
+            _lawyersReportElements = new List<LawyerReportElements>();
             await MainWork();
         }
     }

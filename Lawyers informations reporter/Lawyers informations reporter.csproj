@@ -7,7 +7,7 @@
     <ProjectGuid>{DF61E60E-D978-4266-9BB4-6113E47B9E86}</ProjectGuid>
     <OutputType>WinExe</OutputType>
     <RootNamespace>Lawyers_informations_reporter</RootNamespace>
-    <AssemblyName>Lawyers informations reporter</AssemblyName>
+    <AssemblyName>Lawyers scraper</AssemblyName>
     <TargetFrameworkVersion>v4.6.1</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
@@ -39,6 +39,9 @@
     </ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="CoreHtmlToImage, Version=1.0.6.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\CoreHtmlToImage.1.0.6\lib\netstandard2.0\CoreHtmlToImage.dll</HintPath>
+    </Reference>
     <Reference Include="EPPlus, Version=5.6.1.0, Culture=neutral, PublicKeyToken=ea159fdaa78159a1, processorArchitecture=MSIL">
       <HintPath>..\packages\EPPlus.5.6.1\lib\net45\EPPlus.dll</HintPath>
     </Reference>
@@ -109,11 +112,13 @@
       <DependentUpon>MainForm.cs</DependentUpon>
     </Compile>
     <Compile Include="Models\ChoisenLawyer.cs" />
+    <Compile Include="Models\CreateReport.cs" />
     <Compile Include="Models\Lawyer.cs" />
     <Compile Include="Models\HttpCaller.cs" />
     <Compile Include="Models\LawSocietyOfAlbertaStyleAndCss.cs" />
     <Compile Include="Models\LawyerInputData.cs" />
     <Compile Include="Models\LawyerReportElements.cs" />
+    <Compile Include="Models\NewSearch.cs" />
     <Compile Include="Models\Reporter.cs" />
     <Compile Include="Models\Utility.cs" />
     <Compile Include="Program.cs" />
